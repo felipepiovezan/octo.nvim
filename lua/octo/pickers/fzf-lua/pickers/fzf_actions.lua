@@ -8,7 +8,7 @@ local M = {}
 function M.common_buffer_actions(formatted_items)
   return {
     ["default"] = function(selected)
-      picker_utils.open("default", formatted_items[selected[1]])
+      picker_utils.open("tab", formatted_items[selected[1]])
     end,
     ["ctrl-v"] = function(selected)
       picker_utils.open("vertical", formatted_items[selected[1]])
