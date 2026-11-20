@@ -19,10 +19,15 @@ local function handle_entry(fzf_cb, issue, max_id_length, formatted_issues)
   local entry = entry_maker.gen_from_issue(issue)
   if entry ~= nil then
     local owner, name = utils.split_repo(entry.repo)
+    local icon = utils.get_icon(entry)
+    local raw_icon = vim.trim(icon[1])
+    local colored_icon = fzf.utils.ansi_from_hl(icon[2], raw_icon)
     local raw_number = picker_utils.pad_string(entry.obj.number, max_id_length)
     local number = fzf.utils.ansi_from_hl("Comment", raw_number)
-    local ordinal_entry = string.format("%s %s %s %s %s", entry.kind, owner, name, raw_number, entry.obj.title)
-    local string_entry = string.format("%s %s %s %s %s", entry.kind, owner, name, number, entry.obj.title)
+    local ordinal_entry =
+      string.format("%s %s %s %s %s %s", entry.kind, owner, name, raw_icon, raw_number, entry.obj.title)
+    local string_entry =
+      string.format("%s %s %s %s %s %s", entry.kind, owner, name, colored_icon, number, entry.obj.title)
     formatted_issues[ordinal_entry] = entry
     fzf_cb(string_entry)
   end

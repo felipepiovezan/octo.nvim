@@ -135,6 +135,7 @@ function M.search(cache)
     local kind = match()
     local owner = match()
     local name = match()
+    match() -- state icon
     local number = tonumber(match())
 
     local function write(obj)
