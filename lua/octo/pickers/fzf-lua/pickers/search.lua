@@ -8,10 +8,13 @@ local picker_utils = require "octo.pickers.fzf-lua.pickers.utils"
 local utils = require "octo.utils"
 local previewers = require "octo.pickers.fzf-lua.previewers"
 
+local PREFETCH_COUNT = 8
+
 ---@param fzf_cb fzf-lua.fzfCb
 ---@param issue table
 ---@param max_id_length integer
 ---@param formatted_issues table<string, table> entry.ordinal -> entry
+---@return table? entry
 local function handle_entry(fzf_cb, issue, max_id_length, formatted_issues)
   local entry = entry_maker.gen_from_issue(issue)
   if entry ~= nil then
@@ -23,6 +26,7 @@ local function handle_entry(fzf_cb, issue, max_id_length, formatted_issues)
     formatted_issues[ordinal_entry] = entry
     fzf_cb(string_entry)
   end
+  return entry
 end
 
 return function(opts)
@@ -30,6 +34,7 @@ return function(opts)
   opts.type = opts.type or "ISSUE"
 
   local formatted_items = {} ---@type table<string, table> entry.ordinal -> entry
+  local preview_cache = {} ---@type octo.fzf-lua.PreviewCache
 
   ---@type fzf-lua.shell.data2
   local function contents(args)
@@ -49,6 +54,7 @@ return function(opts)
           opts.prompt = { opts.prompt }
         end
 
+        local displayed = 0
         for _, val in ipairs(opts.prompt) do
           local _prompt = query
           if val then
@@ -89,9 +95,15 @@ return function(opts)
             end
           end
 
+          local to_prefetch = {}
           for _, issue in ipairs(issues) do
-            handle_entry(fzf_cb, issue, max_id_length, formatted_items)
+            local entry = handle_entry(fzf_cb, issue, max_id_length, formatted_items)
+            if entry ~= nil and displayed < PREFETCH_COUNT then
+              displayed = displayed + 1
+              table.insert(to_prefetch, entry)
+            end
           end
+          previewers.prefetch(preview_cache, to_prefetch)
         end
 
         fzf_cb()
@@ -103,7 +115,7 @@ return function(opts)
   fzf.fzf_live(contents, {
     prompt = picker_utils.get_prompt(opts.prompt_title),
     exec_empty_query = true,
-    previewer = previewers.search(),
+    previewer = previewers.search(preview_cache),
     query_delay = 500,
     fzf_opts = {
       ["--info"] = "default",

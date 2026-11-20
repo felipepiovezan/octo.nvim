@@ -107,7 +107,18 @@ function M.issue(formatted_issues)
   return previewer
 end
 
-function M.search()
+---@param repo string
+---@param number integer
+---@return string
+local function preview_key(repo, number)
+  return repo .. "#" .. number
+end
+
+---preview_key -> object, or false while its prefetch runs.
+---@alias octo.fzf-lua.PreviewCache table<string, table|false>
+
+---@param cache? octo.fzf-lua.PreviewCache
+function M.search(cache)
   ---@type octo.fzf-lua.Previewer
   local previewer = M.bufferPreviewer:extend()
 
@@ -126,6 +137,31 @@ function M.search()
     local name = match()
     local number = tonumber(match())
 
+    local function write(obj)
+      if self.preview_bufnr ~= tmpbuf or not vim.api.nvim_buf_is_valid(tmpbuf) then
+        return
+      end
+      local state = utils.get_displayed_state(kind == "issue", obj.state, obj.stateReason)
+
+      writers.write_title(tmpbuf, obj.title, 1)
+      writers.write_details(tmpbuf, obj, false, true) -- include_status = true for preview
+      writers.write_body(tmpbuf, obj)
+      writers.write_state(tmpbuf, state:upper(), number)
+      local reactions_line = vim.api.nvim_buf_line_count(tmpbuf) - 1
+      writers.write_block(tmpbuf, { "", "" }, reactions_line)
+      writers.write_reactions(tmpbuf, obj.reactionGroups, reactions_line)
+      vim.bo[tmpbuf].filetype = "octo"
+    end
+
+    local cached = cache and cache[preview_key(owner .. "/" .. name, number)]
+    if cached then
+      self:set_preview_buf(tmpbuf)
+      -- The writers modify the object.
+      write(vim.deepcopy(cached))
+      self.win:update_preview_scrollbar()
+      return
+    end
+
     local query ---@type string
     if kind == "issue" then
       query = graphql("issue_query", owner, name, number, _G.octo_pv2_fragment)
@@ -137,25 +173,11 @@ function M.search()
       opts = {
         cb = gh.create_callback {
           success = function(output)
-            if self.preview_bufnr == tmpbuf and vim.api.nvim_buf_is_valid(tmpbuf) then
-              local result = vim.json.decode(output)
-              local obj
-              if kind == "issue" then
-                obj = result.data.repository.issue
-              elseif kind == "pull_request" then
-                obj = result.data.repository.pullRequest
-              end
-
-              local state = utils.get_displayed_state(kind == "issue", obj.state, obj.stateReason)
-
-              writers.write_title(tmpbuf, obj.title, 1)
-              writers.write_details(tmpbuf, obj, false, true) -- include_status = true for preview
-              writers.write_body(tmpbuf, obj)
-              writers.write_state(tmpbuf, state:upper(), number)
-              local reactions_line = vim.api.nvim_buf_line_count(tmpbuf) - 1
-              writers.write_block(tmpbuf, { "", "" }, reactions_line)
-              writers.write_reactions(tmpbuf, obj.reactionGroups, reactions_line)
-              vim.bo[tmpbuf].filetype = "octo"
+            local result = vim.json.decode(output)
+            if kind == "issue" then
+              write(result.data.repository.issue)
+            elseif kind == "pull_request" then
+              write(result.data.repository.pullRequest)
             end
           end,
         },
@@ -168,6 +190,76 @@ function M.search()
   end
 
   return previewer
+end
+
+---Fetches the previews of `entries` in one request and stores them in `cache`.
+---@param cache octo.fzf-lua.PreviewCache
+---@param entries table[] from `entry_maker.gen_from_issue`
+function M.prefetch(cache, entries)
+  local items = {} ---@type { key: string, field: string }[]
+  local selections = {} ---@type string[]
+  local has_issue, has_pull_request = false, false
+  for _, entry in ipairs(entries) do
+    local typename = entry.obj.__typename
+    local key = preview_key(entry.repo, entry.value)
+    if (typename == "Issue" or typename == "PullRequest") and cache[key] == nil then
+      local field, fragment = "pullRequest", "PullRequestPreviewFragment"
+      if typename == "Issue" then
+        field, fragment = "issue", "IssuePreviewFragment"
+        has_issue = true
+      else
+        has_pull_request = true
+      end
+      local owner, name = utils.split_repo(entry.repo)
+      table.insert(items, { key = key, field = field })
+      selections[#items] = string.format(
+        'item%d: repository(owner: "%s", name: "%s") { %s(number: %d) { ...%s } }',
+        #items,
+        owner,
+        name,
+        field,
+        entry.value,
+        fragment
+      )
+      cache[key] = false
+    end
+  end
+  if #items == 0 then
+    return
+  end
+
+  -- GraphQL rejects documents with unused fragments.
+  local query = "query {\n" .. table.concat(selections, "\n") .. "\n}\n" .. queries.preview_common_fragments
+  if has_issue then
+    query = query .. string.format(queries.issue_preview, _G.octo_pv2_fragment)
+  end
+  if has_pull_request then
+    query = query .. string.format(queries.pull_request_preview, _G.octo_pv2_fragment)
+  end
+
+  local function store(data)
+    for i, item in ipairs(items) do
+      local repo = data and data["item" .. i]
+      local obj = repo and repo ~= vim.NIL and repo[item.field]
+      cache[item.key] = (obj and obj ~= vim.NIL) and obj or nil
+    end
+  end
+
+  gh.api.graphql {
+    query = query,
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local data = vim.json.decode(output).data
+          store(data ~= vim.NIL and data or nil)
+        end,
+        -- Entries left uncached use the full query in the previewer.
+        failure = function()
+          store(nil)
+        end,
+      },
+    },
+  }
 end
 
 function M.commit(formatted_commits, repo)

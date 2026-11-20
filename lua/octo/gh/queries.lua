@@ -698,6 +698,156 @@ query($prompt: String!, $type: SearchType = ISSUE, $last: Int = 100) {
 }
 ]] .. fragments.discussion_info .. fragments.repository
 
+  -- Fields rendered by picker previews. `%s` is the projects v2 fragment.
+  M.pull_request_preview = [[
+fragment PullRequestPreviewFragment on PullRequest {
+  isDraft
+  {isInMergeQueue}
+  {stackEntry}
+  number
+  state
+  title
+  body
+  createdAt
+  lastEditedAt
+  includesCreatedEdit
+  closedAt
+  updatedAt
+  url
+  closingIssuesReferences(first: 10) {
+    totalCount
+    nodes {
+      ...IssueFields
+    }
+  }
+  merged
+  mergedBy {
+    ... on Organization { name }
+    ... on Bot { login }
+    ... on User {
+      login
+      isViewer
+    }
+    ... on Mannequin { login }
+  }
+  additions
+  deletions
+  commits {
+    totalCount
+  }
+  changedFiles
+  headRefName
+  baseRefName
+  milestone {
+    title
+    state
+    openIssueCount
+    closedIssueCount
+    progressPercentage
+  }
+  author {
+    login
+  }
+  authorAssociation
+  viewerDidAuthor
+  viewerCanUpdate
+  viewerSubscription
+  ...ReactionGroupsFragment
+  %s
+  timelineItems(first: 100, itemTypes: [PULL_REQUEST_REVIEW]) {
+    nodes {
+      __typename
+      ... on PullRequestReview {
+        author {
+          login
+        }
+        state
+      }
+    }
+  }
+  reviewDecision
+  labels(first: 20) {
+    ...LabelConnectionFragment
+  }
+  assignees(first: 20) {
+    ...AssigneeConnectionFragment
+  }
+  reviewRequests(first: 20) {
+    totalCount
+    nodes {
+      requestedReviewer {
+        ... on User {
+          login
+          isViewer
+        }
+        ... on Mannequin { login }
+        ... on Bot { login }
+        ... on Team { name }
+      }
+    }
+  }
+  statusCheckRollup {
+    state
+    contexts(first: 100) {
+      nodes {
+        __typename
+        ... on CheckRun {
+          name
+          status
+          conclusion
+          startedAt
+          completedAt
+          detailsUrl
+          checkSuite {
+            workflowRun {
+              workflow {
+                name
+              }
+            }
+          }
+        }
+        ... on StatusContext {
+          context
+          state
+          description
+          targetUrl
+        }
+      }
+    }
+  }
+  mergeStateStatus
+  mergeable
+  autoMergeRequest {
+    enabledBy { login }
+    mergeMethod
+  }
+}
+]]
+
+  M.issue_preview = [[
+fragment IssuePreviewFragment on Issue {
+  ...IssueInformationFragment
+  parent {
+    ...IssueFields
+  }
+  ...ReactionGroupsFragment
+  %s
+  labels(first: 20) {
+    ...LabelConnectionFragment
+  }
+  assignees(first: 20) {
+    ...AssigneeConnectionFragment
+  }
+  viewerSubscription
+}
+]] .. fragments.issue_information
+
+  M.preview_common_fragments = fragments.issue
+    .. fragments.reaction_groups
+    .. fragments.label_connection
+    .. fragments.label
+    .. fragments.assignee_connection
+
   M.discussions = [[
 query(
   $owner: String!,
@@ -1762,6 +1912,8 @@ query($owner: String!, $name: String!, $number: Int!) {
     M.search = M.search:gsub("{isInMergeQueue}", field)
     M.pull_request = M.pull_request:gsub("{isInMergeQueue}", field)
     M.pull_request = M.pull_request:gsub("{stackEntry}", stack_entry_field)
+    M.pull_request_preview = M.pull_request_preview:gsub("{isInMergeQueue}", field)
+    M.pull_request_preview = M.pull_request_preview:gsub("{stackEntry}", stack_entry_field)
     M.pull_requests = M.pull_requests:gsub("{stackSummary}", stack_summary_field)
     M.search = M.search:gsub("{stackSummary}", stack_summary_field)
   else
@@ -1770,6 +1922,8 @@ query($owner: String!, $name: String!, $number: Int!) {
     M.search = M.search:gsub("%s*{isInMergeQueue}\n", "")
     M.pull_request = M.pull_request:gsub("%s*{isInMergeQueue}\n", "")
     M.pull_request = M.pull_request:gsub("%s*{stackEntry}\n", "")
+    M.pull_request_preview = M.pull_request_preview:gsub("%s*{isInMergeQueue}\n", "")
+    M.pull_request_preview = M.pull_request_preview:gsub("%s*{stackEntry}\n", "")
     M.pull_requests = M.pull_requests:gsub("%s*{stackSummary}\n", "")
     M.search = M.search:gsub("%s*{stackSummary}\n", "")
   end
